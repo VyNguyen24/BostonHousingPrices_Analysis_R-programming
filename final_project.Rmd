@@ -1,0 +1,512 @@
+---
+title: "Multi-Million Dollar Homes: Housing Prices in Boston"
+author: "Trevor Riordan, Vy Nguyen, Anna Yee"
+date: "`r Sys.Date()`"
+output: 
+  html_document: 
+    fig_width: 8
+    fig_height: 3
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(openintro)
+library(broom)
+library(infer)
+library(tidymodels)
+library(patchwork)
+library(janitor)
+housing_prices <- read_csv(file="Housing.csv")
+
+housing_prices <- housing_prices %>% mutate(log2_price = log2(price),
+                                            log2_area = log2(area),
+                                            greater_than_avg = ifelse(log2_price > mean(log2_price), "greater", "lesser"))
+                                            
+housing_prices <- housing_prices %>% select(log2_price, log2_area, bedrooms, bathrooms, guestroom, stories, mainroad, hotwaterheating, airconditioning, greater_than_avg, parking)
+```
+### Introduction
+As we get older, housing will soon be at the forefront of our minds. There is not a lot of literature pointing to which factors impact housing prices. Can we accurately predict housing prices based on household features? What are the features that most affect the price of houses? We are looking to best predict housing prices based off some combination of variables that we know impacts the price of homes. Knowledge of the factors affecting higher prices will allow us to make informed financial decisions when assessing the values of households and their features. We can also determine which houses may be good investment opportunities. For example, if having air conditioning impacts the price significantly, it may be wise to consider buying a house without air conditioning, install the air conditioning, and make a profit reselling the house now with air conditioning.  
+
+To help answer these questions we are looking at a dataset outlining 545 higher end houses from the Boston metropolitan area containing details like the price, which we will try to predict based off some combination of the variables area, number of bedrooms, number of bathrooms, number of stories, number of parking spots, whether the house has hot water heating, air conditioning, a guestroom, and/or whether the house was near a main road. The data is sourced in David Harrison and Daniel Rubinfeld's 1978 "Hedonistic Housing Prices and the Demand for Clean Air" article concerning housing prices and David Belsley, Edwin Kuh, and Roy Welsch's 1980 "Regression Diagnostics: Identifying Influential Data and Sources of Collinearity".
+
+The URL is as follows:
+https://www.kaggle.com/yasserh/housing-prices-dataset
+
+The price variable, our response variable, initially ranged from 1,750,000 to 13,300,000 with a relatively large skew to the right. We transformed the price variable with a log2 transformation. The new log2_price variable ranges from 20.7 to 23.7. The transformation made the price variable more symmetric, hopefully making the price variable easier to accurately predict. Following the transformation, the price variable is symmetric and unimodal with a mean of 22.08, a median of 22.05, an IQR of 0.74, and a standard deviation of 0.54.
+
+```{r before-after-transformation, echo=FALSE, message=FALSE, warning=FALSE}
+#Pre-Transformation
+p1 <- ggplot(data=housing_prices, mapping=aes(x=2^(log2_price))) +
+  geom_histogram(binwidth=300000) +
+  labs(title="Price of Homes",
+       subtitle="Before Transformation",
+       x="Price of Home (USD)")
+housing_prices %>% summarize(min = min(2^(log2_price)),
+                             max = max(2^(log2_price)))
+#Post-Transformation
+p2 <- ggplot(data=housing_prices, mapping=aes(x=log2_price)) +
+  geom_histogram(binwidth=0.1) +
+  labs(title="log2(Price) of Homes",
+       subtitle="After Transformation",
+       x="log2(Price of Home) (USD)")
+
+p1 + p2
+
+#Summary statistics
+housing_prices %>% summarize(min = min(log2_price),
+                             mean = mean(log2_price),
+                             median = median(log2_price),
+                             iqr = IQR(log2_price),
+                             sd = sd(log2_price),
+                             max = max(log2_price))
+```
+Additionally, the area variable initially ranged from 1650 to 16200 and was relatively skewed right. We transformed the area variable with a log2 transformation. The transformed area variable ranges from 10.7 to 14. The transformation made the area variable more symmetric, allowing for our model to more accurately utilize the area variable.  Following the transformation, the area variable is symmetric and biimodal with a mean of 12.21, a median of 12.17, an IQR of 0.82, and a standard deviation of 0.57.
+
+```{r pre-then-post-transformation, echo=FALSE, message=FALSE, warning=FALSE}
+#Before Transformation
+p3 <- ggplot(data=housing_prices, mapping=aes(x=2^(log2_area))) +
+  geom_histogram(binwidth=400) +
+  labs(title="Area of Homes",
+       subtitle="Before Transformation",
+       x="Area of Home (square feet)")
+housing_prices %>% summarize(min = min(2^(log2_area)),
+                             max = max(2^(log2_area)))
+### After Transformation
+p4 <- ggplot(data=housing_prices, mapping=aes(x=log2_area)) +
+  geom_histogram(binwidth=0.1) +
+  labs(title="log2(area) of Homes",
+       subtitle="After Transformation",
+       x="log2(area of Home) (square feet)")
+
+p3 + p4
+
+housing_prices %>% summarize(min = min(log2_area),
+                             mean = mean(log2_area),
+                             median = median(log2_area),
+                             iqr = IQR(log2_area),
+                             sd = sd(log2_area),
+                             max = max(log2_area))
+```
+We also created a new variable named greater_than_avg, which classifies whether the log2_price is greater than or less than the average log2_price.
+
+Codebook:
+
+Name of variable | Description of variable | class | range
+---------------- | ----------------------- |-------| -----
+log2(price)      | log2(price) of the house in USD. | numerical | 20.7 - 23.7
+log2(area)       | log2(area)  of the house in square feet | numerical | 1,650 - 16,200 
+bedrooms         | describes the number of bedrooms in the house | numerical | 1 - 6
+bathrooms        | describes the number of bathrooms in the house | numerical | 1 - 4
+stories          | describes the number of stories in the house | numerical | 1 - 4
+parking          | describes the number of parking spots at the house | numerical |0 - 3
+mainroad         | whether the house is connected to a mainroad | categorical | "no", "yes"
+guestroom        | whether the house contains a guest room | categorical | "no", "yes"
+hotwaterheating  | whether the house has hot water heating | categorical | "no", "yes"
+airconditioning  | whether the house has air conditioning | categorical | "no", "yes"
+greater_than_avg | whether the log2_price is greater than or less than the average | categorical | "greater", "lesser"
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+glimpse(housing_prices)
+```
+### Model Building/Exploratory Analysis
+```{r testing-training-split, message=FALSE, warning=FALSE, echo=FALSE}
+set.seed(69)
+ 
+housing_split <- initial_split(housing_prices, prop = 0.50)
+housing_train <- training(housing_split)
+housing_test  <- testing(housing_split)
+```
+We are creating three different models trained on the training set and evaluated on the testing set. This allows us to train the models on the dataframe while still providing data the model has not seen before to evaluate it's effectiveness. We will measure the effectiveness of the models using R-squared values and RMSE scores. However, we aren't sure which variables to use when creating our models. Now we are going to explore which variables are worthwhile using in our models to predict prices. 
+
+#### Model Proposed by Trevor
+
+It initially makes sense to expect an association between area and the price of a home. We would expect a positive, linear relationship between the two, meaning that when area increases, we would expect the housing price to also increase a proportional amount. We can display this relationship using a scatterplot. 
+
+Additionally, we can create a confidence interval of the slope between price and log2(area). The confidence interval will give us insight into the actual slope. If 0 is not in our confidence interval, then we know that log2(area) does have an effect on price.
+
+```{r area-scatter-plot, message=FALSE, warning=FALSE, echo=FALSE}
+#Scatterplot
+b1 <- ggplot(data=housing_prices, mapping=aes(x=log2_area, y=log2_price)) +
+  geom_point() + 
+  labs(title="price versus log2(area)",
+       subtitle="545 houses in Boston") +
+  geom_smooth(method="lm", se=FALSE)
+
+set.seed(69)
+boot_slope_area <- housing_prices %>%
+                specify(log2_price ~ log2_area) %>%
+                generate(reps = 1000, type = "bootstrap") %>%
+                calculate(stat = "slope")
+
+b2 <- boot_slope_area %>% visualize()
+
+b1 + b2
+
+boot_slope_area %>% get_confidence_interval(level=0.99)
+```
+Comparing log2(area) to price in the scatterplot clearly shows a relatively strong, positive, linear relationship with price. This means that log2_price is at least somewhat dependent on the variable log2_area. Therefore log2_area is a good variable to include in my linear model.
+
+I am 99% confident the actual slope comparing price to log2(area) is between 0.45 and 0.64. Because 0 is not in the confidence interval, there is at least some degree of correlation between the variables log2(area) and log2_price. This confidence interval gives me further incentive to explore the relationship between the variables and include log2_area in my model. 
+
+To examine the relationship between the number of bedrooms and log2_price, I will examine a boxplot comparing the prices between the different numbers of bedrooms in the houses. I will use a boxplot instead of a scatterplot due to the bedrooms variable only being able to take integers. If there is a correlation between bedrooms and log2_price, I would expect to see a relatively strong, positive, linear relationship when comparing the median and overall prices between number of bedrooms in the home.
+
+I will also construct a confidence interval analyzing the slope between the two variables. If 0 is not in the confidence interval, I can conclude there is a correlation between the variables bedrooms and price, and we should further explore the relationship between the two variables in the linear model.
+```{r bedrooms-boxplot, message=FALSE, warning=FALSE, echo=FALSE}
+c1 <- ggplot(data=housing_prices, mapping=aes(x=factor(bedrooms), y=log2_price)) +
+  geom_boxplot() + 
+  labs(title="price versus number of bedrooms",
+       subtitle="545 houses in Boston",
+       x="number of bedrooms")
+
+set.seed(69)
+boot_slope_bedrooms <- housing_prices %>%
+                specify(log2_price ~ bedrooms) %>%
+                generate(reps = 1000, type = "bootstrap") %>%
+                calculate(stat = "slope") 
+                
+c2 <- boot_slope_bedrooms %>% visualize()
+
+c1 + c2
+
+boot_slope_bedrooms %>% get_confidence_interval(level=0.99)
+```
+Comparing the number of bedrooms to log2_price, I can see a relatively strong, positive, linear relationship. As the number of bedrooms increases, the median price increases as well most of the time. This tells us that there is a correlation between the variables bedrooms and log2_price that I can further explore in my model.
+
+I am 99% confident the actual slope comparing price to bedrooms is between 0.19 and 0.35. Because 0 is not in the confidence interval, there is some degree of correlation between the variables bedrooms and price. This confidence interval gives me further incentive to explore the relationship and include bedrooms in the model. 
+
+I can perform hypothesis testing with randomization to disprove independence between log2_price and airconditioning. In the introduction, we mentioned creating a new variable to classify whether the house is greater than or less than the mean price. This is an extension of the log2_price variable used to prove or disprove independence with price and airconditioning. I can calculate the difference in proportion of houses with or without airconditioning that have a price greater than average. I initially accept the null hypothesis claiming independence, which states that there is no difference in the proportion of houses with or without airconditioning that have a price greater than average. The alternative hypothesis claims dependence and states that the proportion of houses with a price higher than average will be greater for houses with airconditioning than without it.
+
+To get the observed value, I will create a contingency table showing the cross classification of the houses by greater_than_avg and airconditioning. 
+
+I can create a mosaic plot to visually show a difference in expected values between houses with or without airconditioning with prices greater than average. A blue or red color indicates a strong association between the two variables.
+```{r contingency-table-ac, message=FALSE, warning=FALSE, echo=FALSE}
+set.seed(69)
+
+#create table comparing competing percentages
+housing_prices %>% tabyl(airconditioning, greater_than_avg, show_na = FALSE) %>% 
+           adorn_totals(where = "col") %>%
+           adorn_percentages(denominator = "row") %>% 
+           adorn_pct_formatting(digits=3) %>%
+           adorn_ns()
+
+mosaicplot(greater_than_avg ~ airconditioning, data=housing_prices, shade=TRUE)
+```
+Here I can see the difference in proportions of houses with greater than average prices between those with airconditioning and those without. Out of the 172 houses with airconditioning, 134 of the houses had a price greater than average. Out of the 373 houses without airconditioning, only 129 of the houses had a price greater than average. The observed difference in proportion would therefore be 134/172 - 129/373, or 0.433. Additionally, according to the mosaic plot, there are shaded colors in every category between airconditioning and greater_than_avg. These shaded colors means there is interaction between the variables, indicating airconditioning is a good variable to use in our model. 
+
+I can then create a null distribution based on the null hypothesis to determine how likely our observed statistic would happen by chance. If the p-value is less than or equal to 0.35, meaning 35% of the data points in the null distribution are greater than or equal to our observed value in supporting the alternative hypothesis, we can further explore the relation between log2_price and airconditioning in our model.
+
+```{r null-distribution-ac, message=FALSE, warning=FALSE, echo=FALSE}
+#create the null distribution
+
+diff_prop_greater <- 134/172 - 129/373
+
+null_dist <- housing_prices %>%
+  specify(greater_than_avg ~ airconditioning, success = "greater") %>%
+  hypothesize(null = "independence") %>%
+  generate(reps=1000, type = "permute") %>%
+  calculate(stat = "diff in props", 
+            order = c("yes", "no"))
+
+#visualize the distribution and calculate p-value
+
+null_dist %>% 
+  visualize() + 
+  shade_p_value(obs_stat=diff_prop_greater, direction = "greater")
+null_dist %>% get_p_value(obs_stat=diff_prop_greater, direction="greater") 
+```
+The p-value of 0 indicates that 0% of the values in the null distribution are greater than or equal to our observed value. This means my observed value is very extreme and there is a statistically significant difference in proportions. Houses with airconditioning are significantly more likely to have a greater than average price, meaning that greater_than_avg is dependent on airconditioning. We reject the null hypothesis and accept the alternative hypothesis. This means that there is a serious correlation worth exploring in our linear model between log2_price and airconditioning.
+
+In the end, I decided my linear model will use the explanatory variables log2_area, bedrooms, and airconditioning to predict housing prices due to log2_price's partial dependence on all these variables individually.
+
+```{r trevor-model, message=FALSE, warning=FALSE, echo=FALSE}
+model1 <- lm(log2_price ~ log2_area + bedrooms + airconditioning, data=housing_train)
+
+model1_estimate <- model1 %>% tidy() %>% select(term, estimate)
+model1_estimate
+
+model1 %>% glance() %>% select(r.squared, adj.r.squared)
+
+housing_price_pred <-predict(model1, newdata=housing_test)  %>%
+  bind_cols(housing_test %>% select(log2_price) ) %>% 
+  rename(pred = ...1)
+
+rmse(housing_price_pred, truth = log2_price , estimate = pred)
+```
+My fitted model equation is log2_price-hat = 15.805 + 0.466 * log2_area + 0.167 * bedrooms + 0.354 * airconditioningyes. This model has an R-squared of 0.515 and an adjusted R-squared of 0.509. The fitted model has an RMSE of 0.377.
+
+#### Model Proposed by Anna
+
+We predict that the overall log2 price will increase as the number of stories increases and that the two variables are dependent. To prove this, instead of using a scatter plot for the variable 'stories', we are going to use the box plot instead to show the trend of the relationship between stories and log2(price). We also decided to use the box plot instead of the scattering plot because the data in our variable stories are in integers. We believe that using a box plot would give a better visualization when analyzing the data between stories and price. 
+
+In addition to this, we also did a confidence interval of the two variables' slope to see if zero is within the interval. If the variables do not fall into the zero interval, that means that there is a correlation between the two variables and I should look into what the relationship between the two is.
+
+```{r stories-boxplot, message=FALSE, warning=FALSE, echo=FALSE}
+#stories vs price (numerical)
+
+a1 <- ggplot(data=housing_prices,
+       mapping=aes(x=factor(stories),
+                   y=log2_price))+
+  geom_boxplot() +
+  labs(title="How does number of stories on a house correlate with pricing? ",
+          subtitle="housing in Boston",
+          caption = "package:Housing.csv",
+          x= "number of stories houses have",
+          y= "price of the house") +
+  geom_smooth(method="lm", se=FALSE)
+
+#bootstrap
+set.seed(69)
+boot_slope_stories <- housing_prices %>%
+                specify(log2_price ~ stories) %>%
+                generate(reps = 1000, type = "bootstrap") %>%
+                calculate(stat = "slope") 
+
+a2 <- boot_slope_stories %>% visualize() 
+
+a1 + a2
+
+housing_prices %>% summarize(cor_vars= cor(stories, log2_price))
+
+boot_slope_stories%>%
+  summarize(
+    lower = quantile(stat,0.025),
+    upper = quantile (stat, 0.975))
+```
+Looking at the box plot, we can see a clear trend between the two variables. As the number of stories increases, the price also increases as well, showing a relatively linear relationship between the price and the number of stories. Furthermore, when calculating the correlation between the two, we got 0.41 which could be concluded as a relatively good relationship. Furthermore, when we created a bootstrap distribution, the data is overall unimodal and symmetrical. The lower range is 0.21 and the upper range is 0.29 showing that the data set does not fall within the zero range. Since zero is not within our range, it indicates that there is a correlation between the price and the number of stories and they are dependent on each other. As the number of stories increases, the price increases. 
+
+Since the guestroom variable is a categorical variable, we decided to do a box plot for this as well since we cannot effectively perform a scatterplot for categorical variables. The box plot will allow us to see the relationship between the price range when a house has a guest room and the price range of houses without a guest room.
+
+```{r boxplot-guestroom, message=FALSE, warning=FALSE, echo=FALSE}
+#price vs guest room (cat)
+ggplot(data=housing_prices,
+       mapping=aes(x=guestroom,
+                   y=log2_price))+
+  geom_boxplot () +
+  labs(title = "Boxplot guestroom",
+       y = "price",
+       x = "guestroom")
+```
+After plotting the box plot for our guest room categorical variable, we can see that overall, there is a difference in price between nonguest room houses and guest room houses. The medium and mean of houses with guest rooms are higher in price compared to medium and mean of the nonguest room houses. We can also see that the minimum price of the house with a guest room is around the same price as the 25th percentile of the house with the nonguest room. This clearly shows a relationship between guest rooms and price and that having a guest room is much more expensive compared to not having a guest room.
+
+In order to show the strength of association between the two variables log2price and guestroom, we created a contingency table and a mosaic plot. The percentage on the contingency table will give us the benchmark of what we should expect if log2price and guestroom have no association with each other. However, if there is red or blue on the mosaic table, it would show a strong association between the two variables. Furthermore, in order to check if the two variables are independent in a mosaic plot, all proportions will be the same and the boxes will line up in a grid. 
+
+```{r contingency-table, message=FALSE, warning=FALSE, echo=FALSE}
+#pvalue
+housing_prices %>% tabyl (guestroom, greater_than_avg, show_na = FALSE) %>%
+  adorn_totals(where="col") %>%
+  adorn_percentages(denominator = "row") %>%
+  adorn_pct_formatting (digits = 3) %>%
+  adorn_ns()
+
+mosaicplot(greater_than_avg ~ guestroom, data=housing_prices, shade=TRUE)
+```
+As you can see from our mosaic plot, we can clearly see a difference in the box proportions and the difference in color, which is mostly in red and blue. Due to this, it makes the guestroom variable a good variable to use in our linear model. 
+
+Just like the guestroom variable, for the main road variable, we decided to use a box plot for it as well since we cannot effectively perform a scatterplot for categorical variables. The box plot will show us the relationship between house prices that are on the main road and not on the main road. 
+
+```{r mainroad-boxplot, message=FALSE, warning=FALSE, echo=FALSE}
+ggplot(data=housing_prices,
+       mapping=aes(x=mainroad,
+                   y=log2_price))+
+  geom_boxplot () +
+  labs(title = "Boxplot mainroad",
+       y = "price",
+       x = "mainroad") 
+```
+
+The box plot clearly shows a difference in price when the house is on the main road vs when it is not on the main road. The mean and medium of price for houses on the main road are higher compared to nonmain roadhouses. Furthermore, we can clearly see that even the 25th percentile of the house on the main road has a higher price compared to the medium of the house on the nonmain road. This shows us that houses on the main road have higher prices overall than houses on the nonmain road. 
+
+To further prove that the variables of log2price and main road are dependent, we will do a hypothesis testing with the p-value. We will calculate the difference in proportion between main roadhouses and nonmain roadhouses with prices that are higher on average. The null hypothesis states that there is no difference in proportion between the main road and nonmain roadhouses with prices greater than average. The alternative hypothesis states that there is a positive difference in proportion between the main road and nonmain roadhouses with prices greater than average. To test which hypothesis is correct, we will first create a contingency table with greater_than_avg and guestroom to see the observed difference in proportions.
+
+```{r contingency-value-mainroad, message=FALSE, warning=FALSE, echo=FALSE}
+housing_prices %>% tabyl (mainroad, greater_than_avg, show_na = FALSE) %>%
+  adorn_totals(where="col") %>%
+  adorn_percentages(denominator = "row") %>%
+  adorn_pct_formatting (digits = 3) %>%
+  adorn_ns()
+
+diff_prop_ <- 255/468 - 8/77
+```
+Looking at the contingency table, the difference in proportion between the main road and nonmain roadhouses with prices greater than average is 255/468 - 8/77.
+
+```{r p-value-mainroad, message=FALSE, warning=FALSE, echo=FALSE}
+set.seed (69)
+
+null_dist <- housing_prices %>%
+  specify (greater_than_avg ~ mainroad, success="greater") %>%
+  hypothesize (null = "independence") %>%
+  generate(reps = 1000, type = "permute") %>%
+  calculate(stat = "diff in props",
+            order = c("yes", "no"))
+
+null_dist %>% visualize () +
+  shade_p_value (obs_stat = diff_prop_, direction = "greater")
+null_dist %>% get_p_value(obs_stat=diff_prop_greater, direction="greater") 
+```
+As the p-value is also zero for this categorical variable, we can conclude that our observed value is greater than all values in the null distribution. We can reject the null hypothesis as the p-value zero is less than the significant level of 0.05. This indicates that the variable main road is a good variable to observe in our linear model because the main road variable and the price variable are dependent on each other.
+
+Fitted model 
+Since our group decided to choose variables that are not similar to each other so that we won’t have repeated graphs, I decided to choose the variables log2 price, main road, guest room, and stories. I believed that the chosen variables would have a correlation with log2price. For example, I believe that there would be a huge difference in price when a house is on the main road and nonmain road because houses on the main road have easier access making the market price for those houses higher. All of these variables have a correlation with log2price and are confirmed through a relatively strong linear relationship and colorful mosaic plot. 
+
+```{r fitted-equation, message=FALSE, warning=FALSE, echo=FALSE}
+set.seed(69)
+
+model2<-lm(log2_price ~ guestroom+stories+mainroad, data=housing_prices)
+
+model2 %>% tidy() %>%
+  select(term, estimate)
+
+model2 %>% glance() %>%
+  select(r.squared, adj.r.squared)
+
+housing_price_pred <- predict (model2, newdata=housing_test) %>%
+  bind_cols(housing_test %>% select (log2_price)) %>%
+  rename(pred=...1)
+rmse(housing_price_pred, truth=log2_price, estimate = pred) 
+```
+My fitted model for my variables are log2_price_hat = 21.26 + 0.33 * guestroomyes + 0.23 * stories + 0.40 * mainroadyes. The r.squared is 0.31 and the adj.r.squared is 0.30. The RMSE is 0.44. 
+
+#### Model Proposed by Vy
+
+_Hotwaterheating_: As we know the weather in Boston can be cold, we expect hotwaterheating variable might have a significant impact on price. So we want to use hotwaterheating to predict log2_price. Because hotwaterheating is a categorical variable, so boxplot will be the best way to analyze the relationship between those two. It will show the median of log2_price between house with and without hotwaterheating. If the median of log2_price of houses with hotwaterheating is greater than houses without hotwaterheating, we can conclude that log2_price is partially dependent on hotwaterheating. 
+
+Also, we calculate the mean of log2_price of houses with and without hotwaterheating to determine how big does hotwaterheating impact on log2_price if they are related to each other. 
+
+```{r 3 boxplot-hotwaterheating, warning=FALSE, message=FALSE, echo=FALSE}
+  
+ggplot(data=housing_prices, mapping= aes(x=hotwaterheating, y=log2_price)) +
+         geom_boxplot()+
+  labs(title="Boxplot of whether hotwaterheating affects log2(price)",
+       subtitle="Model proposed by Vy Nguyen",
+       y="log2(Price)", x="Hotwaterheating")
+
+housing_prices %>%
+  group_by(hotwaterheating) %>%
+  summarize(mean(log2_price))
+
+```
+
+According to the boxplot, the median of log2_price of houses with hotwaterheating is higher than median log2_price of houses without hotwaterheating. Also, mean log2_price of houses with hotwaterheating is higher than mean log2_price of houses without hotwaterheating about 0.23, which is a relative big amount of money when we undo the log (2^22.30097- 2^22.07285= ~$755,729.9). Thus, hotwaterheating variable has a huge impact on log2_price. 
+
+_Bathrooms_:Besides hotwaterheating, we expect bathrooms to be extremely necessary in people's life. The more bathrooms give people the more comfortable life and comes along with that is a higher price. So we expect a relative strong, positive, and linear relationship between log2_price and bathrooms. 
+
+Because bathrooms is an interger numerical variable (from 1 to 4), so visualizing this relationship by boxplots is the best way to analyze it. If the median log2_price increases as the number of bathrooms increases, then we can conclude that bathrooms variable and log2_price are dependent. That's why I choose bathrooms variable to predict the log2_price in my linear model. 
+
+We can create a confidence interval by using bootstrapping to show the possible slope value between bathrooms and log2_price. If the confidence interval doesn't contain 0, we can conclude that bathrooms have some impact on log2_price. 
+
+```{r boxplot-bathrooms, message=FALSE, warning=FALSE, echo=FALSE}
+#boxplot bathrooms
+v3 <- ggplot(data=housing_prices, mapping= aes(x=factor(bathrooms), y=log2_price)) +
+  geom_boxplot()+
+  labs(title="Bathrooms vs log2(Price)", x="Bathrooms", y="Log2(Price)",
+       subtitle = "Model proposed by Vy Nguyen")+
+  geom_smooth(method="lm", se=FALSE)
+
+#bootstrap
+set.seed(69)
+boot_df <- housing_prices %>%
+  specify( log2_price ~ bathrooms) %>%
+  generate(reps=1000, type= "bootstrap") %>%
+  calculate(stat= "slope")
+
+v4 <- boot_df %>% visualize()
+
+v3 + v4
+
+boot_df %>%
+  summarize(lower=quantile(stat, 0.025),
+            upper=quantile(stat, 0.975))
+```
+
+According to the boxplot, when bathrooms increases, the median of log2_price increases as well. Thus, there is a positive, moderately strong and linear relationship between these two variables.  
+
+Also, we are 95% confidence that the actual slope value is in between 0.437 and 0.609. Because 0 is not in this range, we can conclude that bathrooms variable has a correlation with the log2_price, which is more bathrooms corresponds with higher price. Because of this correlation, we should use the variable bathrooms in our model.
+
+_Parking_:The third variable is parking. Parking provides the convenience for the house owner for parking their car and that benefit we expect it to cost more money. Thus, we choose parking variable to predict the log2_price in my linear model because we expect a relative strong, positive, and linear relationship between log2_price and parking. 
+
+We visualize this relationship through the boxplot as well. If the median log2_price increases as the number of parking increases, then we can conclude that parking variable and log2_price are dependent on each other.  
+
+We can use bootstrapping to create a confidence interval to show the possible slope value between parking and log2_price. If the confidence interval doesn't contain 0, we can conclude that parking has some impact on log2_price. 
+
+We also calculate the mean of log2_price for houses with different numbers of parking to see how varies of log2_price through those numbers of parking.
+
+```{r parking, message=FALSE, echo=FALSE, warning=FALSE}
+#boxplot parking
+v3 <- ggplot(data=housing_prices, mapping= aes(x=factor(parking), y=log2_price)) +
+  geom_boxplot()+
+  labs(title="Parking vs log2(Price)", x="Parking", y="Log2(Price)",
+       subtitle = "Model proposed by Vy Nguyen")+
+  geom_smooth(method="lm", se=FALSE)
+
+#bootstrap-(not include 0)
+set.seed(69)
+boot_df <- housing_prices %>%
+  specify( log2_price ~ parking) %>%
+  generate(reps=1000, type= "bootstrap") %>%
+  calculate(stat= "slope")
+
+v4 <- boot_df %>% visualize()
+
+v3 + v4
+
+#Correlation R
+housing_prices %>% summarize(cor_vars= cor(parking, log2_price))
+
+boot_df %>%
+  summarize(lower=quantile(stat, 0.025),
+            upper=quantile(stat, 0.975))
+
+housing_prices %>%
+  group_by(parking) %>%
+  summarize(mean(log2_price))
+```
+
+According to the box plot, when parking increases, the median of log2_price increases as well except for houses with 3 parking. But the mean log2_price of house with 3 parkings is still high (22.3), so we can see there is a correlation between parking and log2_price. The correlation value is around 0.37, so it demonstrates that the relationship between parking and log2_price is positive, slightly strong and linear. 
+
+Also, we are 95% confidence that the actual slope value is in between 0.183 and 0.281. Because 0 is not in this range, we can conclude that parking variable has some impact on log2_price. 
+
+After all, I chose hotwaterheating, bathrooms, and parking as three variables to predict log2_price in my linear model because of their necessity and benefit to people. If people get more benefit, they have to pay more. Thus, those three variables have a significant impact on log2_price. This is confirmed by those previous plot analysis that I have made by showing the boxplots, correlation value showing relatively positive, strong, and linear relationship, 0 is not in confidential interval to indicate the effectiveness and reliability of these variables in predicting log2_price. 
+
+
+```{r linear-model, message=FALSE, warning=FALSE, echo=FALSE}
+set.seed(69)
+
+model3 <- lm(log2_price ~ bathrooms+ parking + hotwaterheating, data=housing_prices)
+
+tidy(model3) %>%
+  select(term, estimate)
+
+glance(model3) %>%
+  select(r.squared, adj.r.squared)
+
+housing_price_pred <- predict(model3, newdata=housing_test) %>%
+  bind_cols(housing_test %>% select(log2_price)) %>%
+  rename(pred=...1)
+
+rmse(housing_price_pred, truth=log2_price, estimate= pred)
+```
+Equation:
+log2(price)_hat= 21.36 + 0.46 * bathrooms + 0.18 * parking + 0.10 * hotwaterheatingyes
+
+My r squared and adjusted r squared are close to 0.32. My rmse is 0.418.
+
+Here is the table displaying all the fitted model equations, adjusted r-squared values, and the RMSE values.
+
+Fitted model equation | Adjusted R-Squared | RMSE 
+---------------- | ----------------------- |-----
+log2_price-hat = 15.805 + 0.466 * log2_area + 0.167 * bedrooms + 0.354 * airconditioningyes | 0.51 | 0.38
+log2_price-hat = 21.26 + 0.33 * guestroomyes + 0.23 * stories + 0.40 * mainroadyes | 0.30 | 0.44
+log2_price-hat= 21.36 + 0.46 * bathrooms + 0.18 * bedrooms + 0.10 * hotwaterheating | 0.32 | 0.42
+
+### Results
+
+The best model was Trevor's model, model1, with an R-squared value of 0.515, an adjusted R-squared of 0.509, and an RMSE of 0.377. Model1 is tied for being the simplest, has the highest R-squared value, and has the lowest RMSE. 
+
+```{r best-fitted-model, message=FALSE, warning=FALSE, echo=FALSE}
+best_fitted_model <- lm(log2_price ~ log2_area + bedrooms + airconditioning, data=housing_prices)
+
+tidy(best_fitted_model)
+```
+The best fitted model equation fit on the entire dataset is log2_price-hat = 16.12 + 0.43 * log2_area + 0.18 * bedrooms + 0.34 * airconditioningyes. Holding all other variables the same, every time the area of the house doubles, the price of the house is expected to increase by a factor of 1.35, on average. Holding all other variables the same, when the number of bedrooms in the listed house increases by one, the price of the house is expected to increase by a factor of 1.13, on average. Holding all other variables the same, the price of a house with airconditioning is expected to be higher than a house without airconditioning by a factor of 1.27, on average. 
+
+Looking back at the questions we initially posed, we have determined that we cannot predict housing prices with great accuracy. Our best model had an RMSE of 0.377, meaning our model was off by a factor of 2^0.377, or 30%, on average. However, we know of many factors that allow us to predict housing prices relatively well. According to the models we created, the variables that affect housing prices the most are area, bathrooms, mainroad, and airconditioning. In the end, we were unsuccessful in creating a super accurate model, but we do have a great general baseline for which variables and factors affect price the most. 
