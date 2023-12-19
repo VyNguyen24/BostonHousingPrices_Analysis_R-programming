@@ -1,4 +1,6 @@
 # RProject
+Use this link to see the project: 
+https://htmlpreview.github.io/?https://github.com/VyNguyen24/BostonHousingPrices_in_Rproject/blob/main/final_project.html 
 
 In this project, we're using R to make visualizations and statiscal calculation to figure out which variables best predict housing prices from the Boston Housing dataset.  
 Knowledge of the factors affecting higher prices will allow us to make informed financial decisions when assessing the values of households and their features. We can also determine which houses may be good investment opportunities.
